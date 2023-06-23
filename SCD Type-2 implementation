@@ -1,0 +1,121 @@
+create table scd2change (
+	person_id int,
+	first_name varchar(20),
+	last_name varchar(20),
+	mobile varchar(20),
+	email varchar(30)
+)
+
+
+--- Loading data into table from the csv file in loacl
+copy scd2change(person_id, first_name, last_name, mobile, email)
+from '/Users/naveenkishorek/Downloads/naveen_sql_test.csv'
+delimiter ','
+CSV header;
+
+select * from scd2change;
+
+select * from
+information_schema.table_constraints
+where table_name = 'scd2change';
+
+truncate table scd2change;
+
+
+--- altering the primary key of my table
+alter table scd2change
+add constraint my_constraint primary key (person_id);
+
+
+---- To check the primary key of my table
+SELECT column_name
+FROM information_schema.key_column_usage
+WHERE table_name = 'scd2change'
+  AND constraint_name = (
+    SELECT constraint_name
+    FROM information_schema.table_constraints
+    WHERE table_name = 'scd2change'
+      AND constraint_type = 'PRIMARY KEY'
+  );
+  
+  
+-----****** IMPLEMENTATION OF SCD-2 *******----------
+
+----STEP:1 ==> adding 3 columns to help identify the changed values
+
+alter table scd2change add column current_flag varchar(1);
+alter table scd2change add column end_date date;
+alter table scd2change add column changed_fields varchar(100);
+
+select * from scd2change;
+
+---- STEP: 2 ==> update the new columns with desired values
+
+update scd2change set current_flag='Y', end_date ='2099-01-01', changed_fields ='NA';
+
+
+---- STEP: 3 ==> Load stage data in stage table
+
+create table scd_stage(person_id int,
+					  first_name varchar(20),
+					  last_name varchar(20),
+					  mobile varchar(20),
+					  email varchar(30))
+					  
+
+		
+copy scd_stage
+from '/Users/naveenkishorek/Downloads/scd2_test_data.csv'
+delimiter ','
+csv header;
+
+select * from scd_stage
+					  
+					  
+---- STEP 4: Add the new records into the dimention table
+
+INSERT into scd2change(
+select s.*, 'Y' as current_flag, '2099-01-01' as end_date, 'NA' as changed_fields
+from scd2change f
+right join scd_stage s
+on f.person_id = s.person_id and f.current_flag='Y'
+where f.person_id is null
+);
+
+---- STEP 5: capture already inserted record in scd2change table
+
+create temporary table temp_table2 as
+select f.person_id as person_id_new,
+case when f.first_name <> s.first_name then '-first_name' else '' end||
+case when f.last_name <> s.last_name then '-last_name' else '' end ||
+case when f.mobile <> s.mobile then '-mobile' else '' end ||
+case when f.email <> s.email then '-email' else '' end as changed_column_name
+from scd2change f join scd_stage s
+on f.person_id = s.person_id and f.current_flag = 'Y'
+where 
+f.first_name <> s.first_name or
+f.last_name <> s.last_name or
+f.mobile <> s.mobile or
+f.email <> s.email
+
+
+select * from temp_table2;
+
+update scd2change set current_flag='N', end_date=current_date,
+changed_fields = changed_column_name
+from temp_table2
+where person_id = person_id_new and current_flag= 'Y';
+
+------
+
+insert into scd2change 
+(select *, 'Y', '2099-01-01', null from scd_stage
+where person_id in(select distinct person_id from temp_table));
+
+
+select * from scd2change
+
+
+
+copy scd2change to '/Users/naveenkishorek/Downloads/test1.csv' csv header;
+
